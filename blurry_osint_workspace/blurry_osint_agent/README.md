@@ -2,6 +2,10 @@
 
 Python runnable demo that implements the full closed-loop workflow described in your specification, including tool orchestration, iteration limits, structured logs, and deterministic mock tools. Real adapters are wired for SauceNAO, Nominatim, and Web-Check; they are best-effort and safe to fail without breaking the demo.
 
+## What This System Does
+
+This system traces the likely origin of blurry or low-quality images using a closed-loop OSINT workflow. It extracts visual features, enhances images, performs multi-engine source discovery, mines metadata, fuses evidence, and iterates when confidence is low. Outputs are structured for downstream automation and auditability.
+
 ## Quick Start
 
 ```powershell
@@ -19,6 +23,20 @@ python -m src.cli --image "C:\\fake\\image.jpg" --mode mock
 
 ```powershell
 python -m src.cli --image "path\\to\\image.jpg" --mode mock --output json
+```
+
+## Gradio UI
+
+```powershell
+python -m src.ui_gradio
+```
+
+## LangChain Integration
+
+This demo includes a LangChain runnable wrapper. Install:
+
+```powershell
+pip install langchain-core
 ```
 
 ## Real-Mode Demo (API-Ready + Network Calls)
@@ -41,7 +59,7 @@ Note: real external calls can fail if keys are missing or endpoints differ from 
 ## Dependencies (Optional)
 
 ```powershell
-pip install requests exifread opencv-python numpy lmdeploy
+pip install requests exifread opencv-python numpy lmdeploy gradio
 ```
 
 ## API Stack (Your Selected Demo Combo)
@@ -58,6 +76,8 @@ pip install requests exifread opencv-python numpy lmdeploy
 - `src/tools.py` Tool stubs + real adapters
 - `src/models.py` Data models and result structures
 - `src/cli.py` Command-line entry point
+- `src/ui_gradio.py` Gradio UI
+- `src/langchain_adapter.py` LangChain wrapper
 - `src/config.py` Constants and thresholds
 
 ## Notes
