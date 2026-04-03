@@ -43,6 +43,14 @@ class SourceInfo:
 
 
 @dataclass
+class ApiError:
+    api: str
+    category: str
+    detail: str
+    retry_count: int
+
+
+@dataclass
 class OsintMetadata:
     gps: str
     published_at: str
@@ -52,6 +60,7 @@ class OsintMetadata:
     source_url: str
     source_info: SourceInfo
     called_apis: List[str]
+    api_errors: List[ApiError] = field(default_factory=list)
 
 
 @dataclass
@@ -69,6 +78,7 @@ class IterationReport:
     plan: SearchPlan
     osint: OsintMetadata
     conclusion: FusionConclusion
+    enhanced_path: str = ""
     failure_reason: str = ""
     optimization: str = ""
     second_round_result: str = ""

@@ -2,11 +2,13 @@
 
 import hashlib
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 from .models import (
+    ApiError,
     VLMPerception,
     EnhancementPlan,
     SearchResult,
@@ -188,6 +190,7 @@ class OsintToolMock(BaseOsintTool):
             source_url=best.url,
             source_info=source_info,
             called_apis=called_apis,
+            api_errors=[],
         )
 
 
@@ -203,26 +206,31 @@ class OsintToolReal(BaseOsintTool):
         platform = _infer_platform(best.url)
         related_text = f"{best.title} | {best.snippet}"
 
+        api_errors: List[ApiError] = []
+
         exif_text = _exifread_extract(image_path)
         gps_tuple = _exifread_gps(image_path)
         gps = f"{gps_tuple[0]:.6f}, {gps_tuple[1]:.6f}" if gps_tuple else "N/A"
         source_info = _build_source_info(best)
         called_apis = []
         if self.sauce_api_key:
-            sauce_source = _saucenao_search(
+            sauce_source, sauce_errors = _saucenao_search(
                 enhanced_path or image_path, self.sauce_api_key
             )
+            api_errors.extend(sauce_errors)
             if sauce_source:
                 source_info = sauce_source
             called_apis.append("SauceNAO")
         if exif_text != "N/A":
             called_apis.append("ExifRead")
         if gps_tuple:
-            nominatim_name = _nominatim_reverse(gps_tuple)
+            nominatim_name, nominatim_errors = _nominatim_reverse(gps_tuple)
+            api_errors.extend(nominatim_errors)
             if nominatim_name:
                 related_text = f"{related_text} | 地点: {nominatim_name}"
                 called_apis.append("Nominatim")
-        webcheck_hint = _web_check(best.url)
+        webcheck_hint, webcheck_errors = _web_check(best.url)
+        api_errors.extend(webcheck_errors)
         if webcheck_hint:
             related_text = f"{related_text} | WebCheck: {webcheck_hint}"
             called_apis.append("Web-Check")
@@ -236,6 +244,7 @@ class OsintToolReal(BaseOsintTool):
             source_url=best.url,
             source_info=source_info,
             called_apis=called_apis,
+            api_errors=api_errors,
         )
 
 
@@ -481,53 +490,80 @@ def _blend_with_mask(foreground, background, mask):
     return (foreground * mask + background * (1 - mask)).astype(np.uint8)
 
 
-def _saucenao_search(image_path: str, api_key: str) -> Optional[SourceInfo]:
+def _saucenao_search(image_path: str, api_key: str) -> Tuple[Optional[SourceInfo], List[ApiError]]:
+    errors: List[ApiError] = []
     try:
         import requests  # type: ignore
-    except Exception:
-        return None
+    except Exception as exc:
+        errors.append(ApiError("SauceNAO", "网络错误", str(exc), 0))
+        return None, errors
 
     if not os.path.exists(image_path):
-        return None
+        errors.append(ApiError("SauceNAO", "网络错误", "image not found", 0))
+        return None, errors
 
     url = "https://saucenao.com/search.php"
     data = {"api_key": api_key, "output_type": 2, "db": 999}
-    try:
-        with open(image_path, "rb") as fh:
-            resp = requests.post(url, data=data, files={"file": fh}, timeout=30)
-        if resp.status_code != 200:
-            return None
-        payload = resp.json()
-    except Exception:
-        return None
+    attempts = 2
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with open(image_path, "rb") as fh:
+                resp = requests.post(url, data=data, files={"file": fh}, timeout=30)
+            if resp.status_code in {401, 403}:
+                errors.append(ApiError("SauceNAO", "API key无效", f"HTTP {resp.status_code}", attempt))
+                return None, errors
+            if resp.status_code == 429:
+                last_error = ApiError("SauceNAO", "额度超限", "HTTP 429", attempt)
+                if attempt < attempts:
+                    time.sleep(1.0 * attempt)
+                    continue
+            if resp.status_code >= 500:
+                last_error = ApiError("SauceNAO", "服务错误", f"HTTP {resp.status_code}", attempt)
+                if attempt < attempts:
+                    time.sleep(1.0 * attempt)
+                    continue
+            if resp.status_code != 200:
+                errors.append(ApiError("SauceNAO", "网络错误", f"HTTP {resp.status_code}", attempt))
+                return None, errors
+            payload = resp.json()
+            results = payload.get("results") or []
+            if not results:
+                return None, errors
+            best = results[0]
+            data = best.get("data", {})
+            ext_urls = data.get("ext_urls") or []
+            if not ext_urls:
+                return None, errors
+            author = (
+                data.get("author_name")
+                or data.get("member_name")
+                or data.get("creator")
+                or data.get("author")
+                or "unknown"
+            )
+            published = data.get("created_at") or data.get("published_at") or "N/A"
+            similarity = float(best.get("header", {}).get("similarity", 0) or 0)
+            confidence = "高" if similarity >= 80 else "中"
+            original = f"【SauceNAO】+【{author}】+【{ext_urls[0]}】+【{published}】"
+            return SourceInfo(original_source=original, repost_source="", source_confidence=confidence), errors
+        except requests.exceptions.RequestException as exc:
+            last_error = ApiError("SauceNAO", "网络错误", str(exc), attempt)
+            if attempt < attempts:
+                time.sleep(1.0 * attempt)
+                continue
+    if last_error:
+        errors.append(last_error)
+    return None, errors
 
-    results = payload.get("results") or []
-    if not results:
-        return None
-    best = results[0]
-    data = best.get("data", {})
-    ext_urls = data.get("ext_urls") or []
-    if not ext_urls:
-        return None
-    author = (
-        data.get("author_name")
-        or data.get("member_name")
-        or data.get("creator")
-        or data.get("author")
-        or "unknown"
-    )
-    published = data.get("created_at") or data.get("published_at") or "N/A"
-    similarity = float(best.get("header", {}).get("similarity", 0) or 0)
-    confidence = "高" if similarity >= 80 else "中"
-    original = f"【SauceNAO】+【{author}】+【{ext_urls[0]}】+【{published}】"
-    return SourceInfo(original_source=original, repost_source="", source_confidence=confidence)
 
-
-def _nominatim_reverse(gps: Tuple[float, float]) -> Optional[str]:
+def _nominatim_reverse(gps: Tuple[float, float]) -> Tuple[Optional[str], List[ApiError]]:
+    errors: List[ApiError] = []
     try:
         import requests  # type: ignore
-    except Exception:
-        return None
+    except Exception as exc:
+        errors.append(ApiError("Nominatim", "网络错误", str(exc), 0))
+        return None, errors
 
     base = os.getenv(
         "NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org/reverse"
@@ -539,40 +575,88 @@ def _nominatim_reverse(gps: Tuple[float, float]) -> Optional[str]:
         "addressdetails": 1,
     }
     headers = {"User-Agent": "blurry-osint-agent-demo/1.0"}
-    try:
-        resp = requests.get(base, params=params, headers=headers, timeout=15)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        return data.get("display_name")
-    except Exception:
-        return None
+    attempts = 2
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = requests.get(base, params=params, headers=headers, timeout=15)
+            if resp.status_code in {401, 403}:
+                errors.append(ApiError("Nominatim", "API key无效", f"HTTP {resp.status_code}", attempt))
+                return None, errors
+            if resp.status_code == 429:
+                last_error = ApiError("Nominatim", "额度超限", "HTTP 429", attempt)
+                if attempt < attempts:
+                    time.sleep(1.0 * attempt)
+                    continue
+            if resp.status_code >= 500:
+                last_error = ApiError("Nominatim", "服务错误", f"HTTP {resp.status_code}", attempt)
+                if attempt < attempts:
+                    time.sleep(1.0 * attempt)
+                    continue
+            if resp.status_code != 200:
+                errors.append(ApiError("Nominatim", "网络错误", f"HTTP {resp.status_code}", attempt))
+                return None, errors
+            data = resp.json()
+            return data.get("display_name"), errors
+        except requests.exceptions.RequestException as exc:
+            last_error = ApiError("Nominatim", "网络错误", str(exc), attempt)
+            if attempt < attempts:
+                time.sleep(1.0 * attempt)
+                continue
+    if last_error:
+        errors.append(last_error)
+    return None, errors
 
 
-def _web_check(target_url: str) -> Optional[str]:
+def _web_check(target_url: str) -> Tuple[Optional[str], List[ApiError]]:
+    errors: List[ApiError] = []
     base = os.getenv("WEB_CHECK_BASE_URL")
     if not base:
-        return None
+        return None, errors
     endpoint = os.getenv("WEB_CHECK_ENDPOINT", "/api/check")
     method = os.getenv("WEB_CHECK_METHOD", "GET").upper()
     api_key = os.getenv("WEB_CHECK_API_KEY", "")
     try:
         import requests  # type: ignore
-    except Exception:
-        return None
+    except Exception as exc:
+        errors.append(ApiError("Web-Check", "网络错误", str(exc), 0))
+        return None, errors
     headers = {"User-Agent": "blurry-osint-agent-demo/1.0"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     url = base.rstrip("/") + endpoint
-    try:
-        if method == "POST":
-            resp = requests.post(url, json={"url": target_url}, headers=headers, timeout=20)
-        else:
-            resp = requests.get(url, params={"url": target_url}, headers=headers, timeout=20)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        keys = list(data.keys())[:3]
-        return ",".join(keys) if keys else "ok"
-    except Exception:
-        return None
+    attempts = 2
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            if method == "POST":
+                resp = requests.post(url, json={"url": target_url}, headers=headers, timeout=20)
+            else:
+                resp = requests.get(url, params={"url": target_url}, headers=headers, timeout=20)
+            if resp.status_code in {401, 403}:
+                errors.append(ApiError("Web-Check", "API key无效", f"HTTP {resp.status_code}", attempt))
+                return None, errors
+            if resp.status_code == 429:
+                last_error = ApiError("Web-Check", "额度超限", "HTTP 429", attempt)
+                if attempt < attempts:
+                    time.sleep(1.0 * attempt)
+                    continue
+            if resp.status_code >= 500:
+                last_error = ApiError("Web-Check", "服务错误", f"HTTP {resp.status_code}", attempt)
+                if attempt < attempts:
+                    time.sleep(1.0 * attempt)
+                    continue
+            if resp.status_code != 200:
+                errors.append(ApiError("Web-Check", "网络错误", f"HTTP {resp.status_code}", attempt))
+                return None, errors
+            data = resp.json()
+            keys = list(data.keys())[:3]
+            return ",".join(keys) if keys else "ok", errors
+        except requests.exceptions.RequestException as exc:
+            last_error = ApiError("Web-Check", "网络错误", str(exc), attempt)
+            if attempt < attempts:
+                time.sleep(1.0 * attempt)
+                continue
+    if last_error:
+        errors.append(last_error)
+    return None, errors

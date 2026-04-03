@@ -4,12 +4,21 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import List
 
+from .cache import (
+    add_cache_entry,
+    build_conclusion_from_cache,
+    build_osint_from_cache,
+    compute_ahash,
+    find_similar,
+)
 from .config import (
     RECOGNIZABILITY_THRESHOLD,
     CONFIDENCE_THRESHOLD,
     MAX_ITERATIONS,
     TOP_K_RESULTS,
     ENGINE_PRIORITY,
+    CACHE_ENABLED,
+    CACHE_SIMILARITY_THRESHOLD,
 )
 from .models import AgentOutput, IterationReport, SearchPlan
 from .tools import ToolBundle, build_mock_tools, build_real_tools
@@ -35,14 +44,36 @@ class BlurryOsintAgent:
             else:
                 tools_called.append("Tool2-Enhance-Optional")
 
-            tools_called.append("Tool3-Search")
-            tools_called.append("Tool4-OSINT")
-            tools_called.append("Tool5-Fusion")
+            cache_hit = False
+            cache_similarity = None
+            if CACHE_ENABLED:
+                hash_val = compute_ahash(enhanced_path)
+                if hash_val is not None:
+                    cached_item, dist = find_similar(hash_val, CACHE_SIMILARITY_THRESHOLD)
+                    if cached_item is not None:
+                        cache_hit = True
+                        cache_similarity = dist
+                        tools_called.append("Cache")
+                        metadata = build_osint_from_cache(cached_item)
+                        conclusion = build_conclusion_from_cache(cached_item)
+                        results = []
+                        last_confidence = conclusion.confidence
+                    else:
+                        results = None
+                else:
+                    results = None
+            else:
+                results = None
 
-            results = self.tools.searcher.search(plan.engines, plan.keywords, TOP_K_RESULTS)
-            metadata = self.tools.osint.extract(results, image_path, enhanced_path)
-            conclusion = self.tools.fuser.fuse(perception, results, metadata)
-            last_confidence = conclusion.confidence
+            if not cache_hit:
+                tools_called.append("Tool3-Search")
+                tools_called.append("Tool4-OSINT")
+                tools_called.append("Tool5-Fusion")
+
+                results = self.tools.searcher.search(plan.engines, plan.keywords, TOP_K_RESULTS)
+                metadata = self.tools.osint.extract(results, image_path, enhanced_path)
+                conclusion = self.tools.fuser.fuse(perception, results, metadata)
+                last_confidence = conclusion.confidence
 
             failure_reason = ""
             optimization = ""
@@ -59,11 +90,19 @@ class BlurryOsintAgent:
                 plan=plan,
                 osint=metadata,
                 conclusion=conclusion,
+                enhanced_path=enhanced_path,
+                cache_hit=cache_hit,
+                cache_similarity=cache_similarity if cache_similarity is not None else -1,
                 failure_reason=failure_reason,
                 optimization=optimization,
                 second_round_result=second_round_result,
             )
             output.reports.append(report)
+
+            if CACHE_ENABLED and not cache_hit:
+                hash_val = compute_ahash(enhanced_path)
+                if hash_val is not None:
+                    add_cache_entry(hash_val, image_path, enhanced_path, metadata, conclusion)
 
             if last_confidence >= CONFIDENCE_THRESHOLD:
                 break
@@ -114,7 +153,20 @@ def format_report(output: AgentOutput) -> str:
             f"关联文本：{report.osint.related_text} | EXIF信息：{report.osint.exif}\n"
             f"原始来源：{report.osint.source_info.original_source} | 转发来源：{report.osint.source_info.repost_source or '无'} | "
             f"来源可信度：{report.osint.source_info.source_confidence}\n"
-            f"调用API：{', '.join(report.osint.called_apis) if report.osint.called_apis else '无'}\n\n"
+            f"调用API：{', '.join(report.osint.called_apis) if report.osint.called_apis else '无'}\n"
+        )
+        if report.cache_hit:
+            blocks.append(
+                f"缓存命中：是 | 相似度距离：{report.cache_similarity}\n\n"
+            )
+        if report.osint.api_errors:
+            error_text = " ; ".join(
+                f"{e.api}:{e.category}({e.retry_count})" for e in report.osint.api_errors
+            )
+            blocks.append(f"API错误：{error_text}\n\n")
+        else:
+            blocks.append("\n")
+        blocks.append(
             "【溯源结论】\n"
             f"最终结论：{report.conclusion.conclusion} | 可信度评分：{report.conclusion.confidence:.1f} | 证据链（逐条列明）："
             f"1.{report.conclusion.evidence[0]} 2.{report.conclusion.evidence[1]} 3.{report.conclusion.evidence[2]}\n"

@@ -12,3 +12,6 @@ ENGINE_PRIORITY = {
     "车辆": ["Google Lens", "TinEye"],
     "风景": ["Yandex Images", "Google Lens"],
 }
+
+CACHE_ENABLED = True
+CACHE_SIMILARITY_THRESHOLD = 8  # Hamming distance threshold for aHash (0~64)

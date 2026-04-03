@@ -19,20 +19,23 @@ def _resolve_image_path(image) -> Optional[str]:
     return None
 
 
-def run_demo(image, mode: str, output: str, use_langchain: bool) -> str:
+def run_demo(image, mode: str, output: str, use_langchain: bool):
     image_path = _resolve_image_path(image)
     if not image_path or not os.path.exists(image_path):
-        return "未检测到有效图片路径，请重新上传。"
+        return "未检测到有效图片路径，请重新上传。", None
     if use_langchain:
         try:
-            return run_with_langchain(image_path, mode, output)
+            result_text = run_with_langchain(image_path, mode, output)
+            enhanced_path = None
         except Exception as exc:
-            return f"LangChain 调用失败：{exc}"
+            return f"LangChain 调用失败：{exc}", None
+        return result_text, enhanced_path
     agent = build_agent(mode)
     result = agent.run(image_path)
+    enhanced_path = result.reports[0].enhanced_path if result.reports else None
     if output == "json":
-        return format_report_json(result)
-    return format_report(result)
+        return format_report_json(result), enhanced_path
+    return format_report(result), enhanced_path
 
 
 def launch() -> None:
@@ -48,12 +51,15 @@ def launch() -> None:
             output = gr.Dropdown(["text", "json"], value="text", label="输出格式")
             use_langchain = gr.Checkbox(value=True, label="使用 LangChain 调度")
         run_btn = gr.Button("开始溯源")
-        result = gr.Textbox(lines=20, label="输出结果")
+        with gr.Row():
+            result = gr.Textbox(lines=20, label="输出结果")
+        with gr.Row():
+            enhanced = gr.Image(type="filepath", label="增强后图像")
 
         run_btn.click(
             fn=run_demo,
             inputs=[image, mode, output, use_langchain],
-            outputs=[result],
+            outputs=[result, enhanced],
         )
 
     demo.launch()

@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-import json
+from dataclasses import asdict
 from typing import Dict
 
 from .agent import build_agent, format_report, format_report_json

@@ -25,6 +25,13 @@ python -m src.cli --image "C:\\fake\\image.jpg" --mode mock
 python -m src.cli --image "path\\to\\image.jpg" --mode mock --output json
 ```
 
+## Cache
+
+- Cache stores a perceptual hash (aHash) and the last successful OSINT result.
+- Cache file: `artifacts/cache.json`
+- When a similar image is seen again, the agent will reuse cached results and skip external calls.
+- Similarity threshold (Hamming distance): `CACHE_SIMILARITY_THRESHOLD` in `src/config.py`.
+
 ## Gradio UI
 
 ```powershell
@@ -79,6 +86,7 @@ pip install requests exifread opencv-python numpy lmdeploy gradio
 - `src/ui_gradio.py` Gradio UI
 - `src/langchain_adapter.py` LangChain wrapper
 - `src/config.py` Constants and thresholds
+- `src/cache.py` Perceptual-hash cache
 
 ## Notes
 
