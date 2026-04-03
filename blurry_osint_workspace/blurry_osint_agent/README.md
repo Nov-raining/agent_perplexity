@@ -6,6 +6,24 @@ Python runnable demo that implements the full closed-loop workflow described in 
 
 This system traces the likely origin of blurry or low-quality images using a closed-loop OSINT workflow. It extracts visual features, enhances images, performs multi-engine source discovery, mines metadata, fuses evidence, and iterates when confidence is low. Outputs are structured for downstream automation and auditability.
 
+## Where To Put API Keys
+
+Set environment variables before running:
+
+```powershell
+setx SAUCENAO_API_KEY "your_key"
+setx WEB_CHECK_BASE_URL "https://web-check.as93.net"
+```
+
+Optional:
+
+```powershell
+setx WEB_CHECK_ENDPOINT "/api/check"
+setx WEB_CHECK_METHOD "GET"
+setx WEB_CHECK_API_KEY "your_token"
+setx NOMINATIM_BASE_URL "https://nominatim.openstreetmap.org/reverse"
+```
+
 ## Quick Start
 
 ```powershell
@@ -38,20 +56,22 @@ python -m src.cli --image "path\\to\\image.jpg" --mode mock --output json
 python -m src.ui_gradio
 ```
 
-## LangChain + Memory + Tool Routing
+## LangChain + Memory + Tool Routing + Vector RAG
 
 This demo includes a LangChain runnable sequence that:
 - Perceives the image
 - Routes tools and expands keywords from memory
 - Runs the agent and stores results back to memory
+- Uses a local vector store (TF-IDF) for similarity retrieval
 
 Install:
 
 ```powershell
-pip install langchain-core
+pip install langchain-core scikit-learn
 ```
 
-Memory store lives at `artifacts/rag/memory.json`.
+Memory store: `artifacts/rag/memory.json`
+Vector store: `artifacts/rag/vector_store.json`
 
 ## Real-Mode Demo (API-Ready + Network Calls)
 
