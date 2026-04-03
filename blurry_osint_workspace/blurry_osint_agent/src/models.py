@@ -79,6 +79,8 @@ class IterationReport:
     osint: OsintMetadata
     conclusion: FusionConclusion
     enhanced_path: str = ""
+    cache_hit: bool = False
+    cache_similarity: int = -1
     failure_reason: str = ""
     optimization: str = ""
     second_round_result: str = ""

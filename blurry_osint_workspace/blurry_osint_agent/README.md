@@ -38,13 +38,20 @@ python -m src.cli --image "path\\to\\image.jpg" --mode mock --output json
 python -m src.ui_gradio
 ```
 
-## LangChain Integration
+## LangChain + Memory + Tool Routing
 
-This demo includes a LangChain runnable wrapper. Install:
+This demo includes a LangChain runnable sequence that:
+- Perceives the image
+- Routes tools and expands keywords from memory
+- Runs the agent and stores results back to memory
+
+Install:
 
 ```powershell
 pip install langchain-core
 ```
+
+Memory store lives at `artifacts/rag/memory.json`.
 
 ## Real-Mode Demo (API-Ready + Network Calls)
 
@@ -80,7 +87,8 @@ pip install requests exifread opencv-python numpy lmdeploy gradio
 ## Project Layout
 
 - `src/agent.py` Core agent pipeline
-- `src/tools.py` Tool stubs + real adapters
+- `src/tools/` Tool implementations (split by capability)
+- `src/rag/` Memory/RAG helpers
 - `src/models.py` Data models and result structures
 - `src/cli.py` Command-line entry point
 - `src/ui_gradio.py` Gradio UI

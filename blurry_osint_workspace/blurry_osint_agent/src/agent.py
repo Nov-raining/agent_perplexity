@@ -2,7 +2,7 @@
 
 from dataclasses import asdict
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from .cache import (
     add_cache_entry,
@@ -28,12 +28,12 @@ class BlurryOsintAgent:
     def __init__(self, tools: ToolBundle) -> None:
         self.tools = tools
 
-    def run(self, image_path: str) -> AgentOutput:
+    def run(self, image_path: str, extra_keywords: Optional[List[str]] = None) -> AgentOutput:
         output = AgentOutput()
         perception = self.tools.vlm.perceive(image_path)
 
         last_confidence = 0.0
-        plan = self._build_plan(perception)
+        plan = self._build_plan(perception, extra_keywords or [])
 
         for iteration in range(1, MAX_ITERATIONS + 1):
             enhanced_path = self.tools.enhancer.apply(image_path, plan.preprocess)
@@ -114,9 +114,12 @@ class BlurryOsintAgent:
 
         return output
 
-    def _build_plan(self, perception) -> SearchPlan:
+    def _build_plan(self, perception, extra_keywords: List[str]) -> SearchPlan:
         engines = ENGINE_PRIORITY.get(perception.subject_type, ["Google Lens", "TinEye"])
         keywords = [perception.subject_type, perception.region_hint] + perception.features[:2]
+        for key in extra_keywords:
+            if key and key not in keywords:
+                keywords.append(key)
         preprocess = self.tools.enhancer.plan(perception.blur_level, perception.recognizability).steps
         return SearchPlan(engines=engines, keywords=keywords, preprocess=preprocess)
 
